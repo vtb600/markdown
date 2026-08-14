@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDF → Markdown (Mistral OCR)</title>
+<style>
+  :root{
+    --ink:#1a1a2e;
+    --bg:#f6f5f2;
+    --panel:#ffffff;
+    --accent:#4f5df0;
+    --accent-dark:#3a45c4;
+    --line:#e3e1db;
+    --ok:#1b8a5a;
+    --err:#c0392b;
+    --muted:#6b6b76;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family:"Segoe UI", -apple-system, Roboto, sans-serif;
+    background:var(--bg);
+    color:var(--ink);
+    padding:32px 16px;
+  }
+  .wrap{max-width:840px;margin:0 auto;}
+  header{margin-bottom:24px;}
+  h1{font-size:1.5rem;margin:0 0 4px;}
+  header p{margin:0;color:var(--muted);font-size:.95rem;}
+
+  .panel{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:22px;
+    margin-bottom:18px;
+  }
+  label{display:block;font-weight:600;font-size:.85rem;margin-bottom:6px;}
+  .hint{font-size:.8rem;color:var(--muted);margin-top:4px;}
+
+  input[type="password"], input[type="text"]{
+    width:100%;
+    padding:10px 12px;
+    border:1px solid var(--line);
+    border-radius:8px;
+    font-size:.95rem;
+    background:#fafafa;
+  }
+
+  .drop{
+    border:2px dashed var(--line);
+    border-radius:10px;
+    padding:26px;
+    text-align:center;
+    cursor:pointer;
+    transition:.15s;
+    background:#fafafa;
+  }
+  .drop.drag{border-color:var(--accent);background:#eef0fe;}
+  .drop input{display:none;}
+  .drop .fname{margin-top:8px;font-weight:600;font-size:.9rem;color:var(--accent-dark);}
+
+  .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;}
+  button{
+    border:none;
+    border-radius:8px;
+    padding:11px 18px;
+    font-size:.9rem;
+    font-weight:600;
+    cursor:pointer;
+    transition:.15s;
+  }
+  .btn-primary{background:var(--accent);color:#fff;}
+  .btn-primary:hover{background:var(--accent-dark);}
+  .btn-primary:disabled{background:#b7bcf3;cursor:not-allowed;}
+  .btn-secondary{background:#efeeea;color:var(--ink);}
+  .btn-secondary:hover{background:#e2e0d9;}
+  .btn-secondary:disabled{opacity:.5;cursor:not-allowed;}
+
+  .status{
+    margin-top:14px;
+    font-size:.85rem;
+    padding:10px 12px;
+    border-radius:8px;
+    display:none;
+  }
+  .status.show{display:block;}
+  .status.info{background:#eef0fe;color:var(--accent-dark);}
+  .status.ok{background:#e6f6ee;color:var(--ok);}
+  .status.err{background:#fbeaea;color:var(--err);}
+
+  textarea{
+    width:100%;
+    min-height:340px;
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:14px;
+    font-family:"SFMono-Regular", Consolas, Menlo, monospace;
+    font-size:.82rem;
+    line-height:1.5;
+    resize:vertical;
+    background:#fdfdfc;
+  }
+  .out-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;}
+  .out-head h2{font-size:1rem;margin:0;}
+  footer{font-size:.78rem;color:var(--muted);text-align:center;margin-top:6px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>PDF scan → Markdown</h1>
+    <p>Dùng Mistral OCR API để trích xuất nội dung PDF scan sang Markdown, sẵn sàng nạp vào Chatbase.</p>
+  </header>
+
+  <div class="panel">
+    <label for="apiKey">Mistral API Key</label>
+    <input type="password" id="apiKey" placeholder="sk-... (dán API key của bạn)">
+    <div class="hint">Key chỉ được dùng trong trình duyệt của bạn để gọi trực tiếp API Mistral, không được lưu lại hay gửi đi đâu khác.</div>
+  </div>
+
+  <div class="panel">
+    <label>File PDF</label>
+    <div class="drop" id="dropZone">
+      <div>Kéo thả file PDF vào đây, hoặc bấm để chọn file</div>
+      <div class="fname" id="fileName"></div>
+      <input type="file" id="fileInput" accept="application/pdf">
+    </div>
+
+    <div class="row">
+      <button class="btn-primary" id="convertBtn" disabled>Chuyển đổi sang Markdown</button>
+    </div>
+
+    <div class="status" id="status"></div>
+  </div>
+
+  <div class="panel" id="outputPanel" style="display:none;">
+    <div class="out-head">
+      <h2>Kết quả Markdown</h2>
+      <div class="row" style="margin:0;">
+        <button class="btn-secondary" id="copyBtn">Copy</button>
+        <button class="btn-secondary" id="downloadBtn">Tải file .md</button>
+      </div>
+    </div>
+    <textarea id="output" spellcheck="false" placeholder="Nội dung markdown sẽ hiện ở đây..."></textarea>
+  </div>
+
+  <footer>Gọi trực tiếp API Mistral (api.mistral.ai) từ trình duyệt — cần trình duyệt/mạng cho phép truy cập miền này.</footer>
+</div>
+
+<script>
+  const dropZone = document.getElementById('dropZone');
+  const fileInput = document.getElementById('fileInput');
+  const fileNameEl = document.getElementById('fileName');
+  const convertBtn = document.getElementById('convertBtn');
+  const statusEl = document.getElementById('status');
+  const outputPanel = document.getElementById('outputPanel');
+  const output = document.getElementById('output');
+  const copyBtn = document.getElementById('copyBtn');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const apiKeyInput = document.getElementById('apiKey');
+
+  let selectedFile = null;
+
+  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag');
+    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', e => {
+    if (e.target.files.length) handleFile(e.target.files[0]);
+  });
+
+  function handleFile(file){
+    if (file.type !== 'application/pdf'){
+      showStatus('Vui lòng chọn file PDF.', 'err');
+      return;
+    }
+    selectedFile = file;
+    fileNameEl.textContent = file.name;
+    convertBtn.disabled = false;
+  }
+
+  function showStatus(msg, type){
+    statusEl.textContent = msg;
+    statusEl.className = 'status show ' + type;
+  }
+
+  function fileToBase64(file){
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = () => reject(new Error('Không đọc được file.'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  convertBtn.addEventListener('click', async () => {
+    const apiKey = apiKeyInput.value.trim();
+    if (!apiKey){
+      showStatus('Vui lòng nhập Mistral API Key.', 'err');
+      return;
+    }
+    if (!selectedFile){
+      showStatus('Vui lòng chọn file PDF.', 'err');
+      return;
+    }
+
+    convertBtn.disabled = true;
+    showStatus('Đang đọc file...', 'info');
+
+    try{
+      const base64 = await fileToBase64(selectedFile);
+
+      showStatus('Đang gửi tới Mistral OCR, có thể mất vài chục giây với file scan nhiều trang...', 'info');
+
+      const res = await fetch('https://api.mistral.ai/v1/ocr', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + apiKey
+        },
+        body: JSON.stringify({
+          model: 'mistral-ocr-latest',
+          document: {
+            type: 'document_url',
+            document_url: 'data:application/pdf;base64,' + base64
+          }
+        })
+      });
+
+      if (!res.ok){
+        const errText = await res.text();
+        throw new Error('Lỗi API (' + res.status + '): ' + errText);
+      }
+
+      const data = await res.json();
+      const pages = data.pages || [];
+
+      const markdown = pages
+        .map(p => (p.markdown || '').trim())
+        .filter(Boolean)
+        .join('\n\n---\n\n');
+
+      output.value = markdown || '(Không trích xuất được nội dung nào.)';
+      outputPanel.style.display = 'block';
+      showStatus('Xong! Đã chuyển ' + pages.length + ' trang sang Markdown.', 'ok');
+    } catch (err){
+      console.error(err);
+      showStatus('Có lỗi xảy ra: ' + err.message, 'err');
+    } finally {
+      convertBtn.disabled = false;
+    }
+  });
+
+  copyBtn.addEventListener('click', async () => {
+    if (!output.value) return;
+    await navigator.clipboard.writeText(output.value);
+    showStatus('Đã copy vào clipboard.', 'ok');
+  });
+
+  downloadBtn.addEventListener('click', () => {
+    if (!output.value) return;
+    const baseName = selectedFile ? selectedFile.name.replace(/\.pdf$/i, '') : 'output';
+    const blob = new Blob([output.value], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = baseName + '.md';
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+</script>
+</body>
+</html>
